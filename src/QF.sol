@@ -2,12 +2,7 @@
 pragma solidity ^0.8.13;
 
 /// @title Quadratic Funding
-/// @author damboy.eth 
-
-/// @notice A simple implementation of quadratic funding for public goods
-/// @dev This is a very basic implementation and should not be used in production without further testing and security audits
-/// @dev This implementation does not include any mechanisms for preventing Sybil attacks or other forms of manipulation, and should be used with caution in a real-world setting
-/// @dev This implementation is intended for educational purposes only and should not be used in production without further testing and security audits
+/// @notice Simple QF implementation for public goods
 
 /// @notice Interface for Sybil resistance (e.g., Gitcoin Passport, WorldID, or custom identity)
 interface ISybilResistance {
@@ -21,69 +16,34 @@ interface ISybilResistance {
 contract QuadraticFunding {
     // ============ State Variables ============
     
-    /// @notice Contract owner who manages the matching pool
     address public owner;
-    
-    /// @notice Total amount available in the matching pool
     uint256 public totalMatchingFund;
-    
-    /// @notice Total contributions across all projects
     uint256 public totalContribution;
-    
-    /// @notice Precision scaling factor for fixed-point math (1e9 for intermediate calculations)
     uint256 public constant PRECISION_FACTOR = 1e9;
-    
-    /// @notice Timestamp when the current funding round starts
     uint256 public roundStartTime;
-    
-    /// @notice Timestamp when the current funding round ends
     uint256 public roundEndTime;
-    
-    /// @notice Whether the round is currently active
     bool public roundActive;
-    
-    /// @notice Sybil resistance provider (identity verification contract)
     ISybilResistance public sybilResistance;
-    
-    /// @notice Whether Sybil resistance is enabled
     bool public sybilResistanceEnabled;
-    
-    /// @notice Whitelist of verified addresses (when using whitelist mode instead of external Sybil resistance)
     mapping(address => bool) public verifiedAddresses;
-    
-    /// @notice Whether whitelist mode is being used
     bool public whitelistMode;
-    
-    /// @notice Whether the current round has been finalized
     bool public roundFinalized;
-    
-    /// @notice Mapping to store finalized matching amounts for each project
     mapping(uint256 => uint256) public finalizedMatchingAmounts;
-    
-    /// @notice Mapping to track how much each project has withdrawn
     mapping(uint256 => uint256) public projectWithdrawnAmount;
-    
-    /// @notice Remaining matching funds not yet distributed
     uint256 public remainingMatchingFund;
     
-    /// @notice Project struct to store project details
     struct Project {
         uint256 id;
         string name;
         address recipient;
         uint256 totalDonated;
-        mapping(address => uint256) contributors; // Maps contributor address to donation amount
-        uint256[] contributionAmounts; // Array of all individual contributions for QF calculation
-        address[] contributorAddresses; // Array of contributor addresses (for iteration)
+        mapping(address => uint256) contributors;
+        uint256[] contributionAmounts;
+        address[] contributorAddresses;
     }
     
-    /// @notice Mapping from project ID to Project struct
     mapping(uint256 => Project) public projects;
-    
-    /// @notice Counter for project IDs
     uint256 public projectCounter;
-    
-    /// @notice Array to keep track of all project IDs
     uint256[] public projectIds;
     
     // ============ Events ============
@@ -137,28 +97,25 @@ contract QuadraticFunding {
     
     /// @notice Ensures only the contract owner can execute the function
     modifier onlyOwner() {
-        require(msg.sender == owner, "Only owner can call this function");
+        require(msg.sender == owner, "Owner only");
         _;
     }
     
     /// @notice Ensures the funding round is currently active
     modifier roundIsActive() {
-        require(roundActive, "Funding round is not active");
-        require(block.timestamp >= roundStartTime, "Round has not started yet");
-        require(block.timestamp <= roundEndTime, "Round has ended");
+        require(roundActive, "No round");
+        require(block.timestamp >= roundStartTime, "Not started");
+        require(block.timestamp <= roundEndTime, "Ended");
         _;
     }
     
     /// @notice Ensures the caller is verified (via Sybil resistance or whitelist)
     modifier onlyVerified() {
         if (sybilResistanceEnabled) {
-            // Use external Sybil resistance provider
-            require(sybilResistance.isVerified(msg.sender), "Address not verified by Sybil resistance");
+            require(sybilResistance.isVerified(msg.sender), "Not verified");
         } else if (whitelistMode) {
-            // Use simple whitelist
-            require(verifiedAddresses[msg.sender], "Address not on verification whitelist");
+            require(verifiedAddresses[msg.sender], "Not whitelisted");
         }
-        // If neither mode is enabled, allow all contributions
         _;
     }
     
@@ -169,19 +126,13 @@ contract QuadraticFunding {
         projectCounter = 0;
         totalMatchingFund = 0;
         totalContribution = 0;
-        
-        // Initialize round as inactive
         roundActive = false;
         roundStartTime = 0;
         roundEndTime = 0;
         roundFinalized = false;
-        
-        // Initialize Sybil resistance as disabled by default
         sybilResistanceEnabled = false;
         whitelistMode = false;
         sybilResistance = ISybilResistance(address(0));
-        
-        // Initialize matching fund tracking
         remainingMatchingFund = 0;
     }
     
@@ -192,8 +143,8 @@ contract QuadraticFunding {
     /// @param _recipient The address that will receive funds for this project
     /// @return projectId The ID of the newly created project
     function registerProject(string memory _name, address _recipient) public returns (uint256) {
-        require(_recipient != address(0), "Recipient address cannot be zero");
-        require(bytes(_name).length > 0, "Project name cannot be empty");
+        require(_recipient != address(0), "Invalid recipient");
+        require(bytes(_name).length > 0, "No name");
         
         uint256 projectId = projectCounter;
         projectCounter++;
@@ -217,28 +168,18 @@ contract QuadraticFunding {
     /// @dev Records individual contributions for quadratic funding calculations
     /// @dev Only allowed during active funding rounds and for verified addresses
     /// @param _projectId The ID of the project to contribute to
-    function contributeToProject(uint256 _projectId) public payable roundIsActive onlyVerified {
-        require(_projectId < projectCounter, "Project does not exist");
-        require(msg.value > 0, "Contribution amount must be greater than zero");
+    function contribute(uint256 _projectId) public payable roundIsActive onlyVerified {
+        require(_projectId < projectCounter, "Invalid project");
+        require(msg.value > 0, "Zero contribution");
         
         Project storage project = projects[_projectId];
         
-        // Check if this is a new contributor
         bool isNewContributor = project.contributors[msg.sender] == 0;
-        
-        // Update contributor's donation amount for this project
         project.contributors[msg.sender] += msg.value;
-        
-        // Update total donated for this project
         project.totalDonated += msg.value;
-        
-        // Update global contribution tracking
         totalContribution += msg.value;
-        
-        // Store individual contribution amount for QF calculation
         project.contributionAmounts.push(msg.value);
         
-        // Track new contributor address
         if (isNewContributor) {
             project.contributorAddresses.push(msg.sender);
         }
@@ -246,26 +187,16 @@ contract QuadraticFunding {
         emit ContributionMade(_projectId, msg.sender, msg.value);
     }
     
-    /// @notice Shorthand function: contribute ETH to a project
-    /// @param _projectId The ID of the project to contribute to
-    function contribute(uint256 _projectId) public payable roundIsActive onlyVerified {
-        contributeToProject(_projectId);
-    }
+
     
-    /// @notice Get the total donation amount for a specific contributor to a project
-    /// @param _projectId The ID of the project
-    /// @param _contributor The address of the contributor
-    /// @return The total amount contributed by the contributor to this project
+    /// @notice Get contributor amount and project total donations
     function getContributorAmount(uint256 _projectId, address _contributor) public view returns (uint256) {
-        require(_projectId < projectCounter, "Project does not exist");
+        require(_projectId < projectCounter, "Invalid project");
         return projects[_projectId].contributors[_contributor];
     }
     
-    /// @notice Get the total donated amount for a specific project
-    /// @param _projectId The ID of the project
-    /// @return The total amount donated to this project
     function getProjectTotalDonated(uint256 _projectId) public view returns (uint256) {
-        require(_projectId < projectCounter, "Project does not exist");
+        require(_projectId < projectCounter, "Invalid project");
         return projects[_projectId].totalDonated;
     }
     
@@ -275,12 +206,8 @@ contract QuadraticFunding {
     /// @return name Project name
     /// @return recipient Recipient address
     /// @return totalDonated Total amount donated to the project
-    function getProject(uint256 _projectId) 
-        public 
-        view 
-        returns (uint256 id, string memory name, address recipient, uint256 totalDonated) 
-    {
-        require(_projectId < projectCounter, "Project does not exist");
+    function getProject(uint256 _projectId) public view returns (uint256 id, string memory name, address recipient, uint256 totalDonated) {
+        require(_projectId < projectCounter, "Invalid project");
         Project storage project = projects[_projectId];
         return (project.id, project.name, project.recipient, project.totalDonated);
     }
@@ -289,7 +216,7 @@ contract QuadraticFunding {
     
     /// @notice Deposit matching funds into the pool (owner only)
     function depositMatchingFund() public payable onlyOwner {
-        require(msg.value > 0, "Matching fund must be greater than zero");
+        require(msg.value > 0, "Zero amount");
         totalMatchingFund += msg.value;
         remainingMatchingFund += msg.value;
         emit MatchingFundUpdated(totalMatchingFund);
@@ -301,8 +228,8 @@ contract QuadraticFunding {
     /// @dev Only the owner can start a round
     /// @param _durationInSeconds The duration of the round in seconds
     function startRound(uint256 _durationInSeconds) public onlyOwner {
-        require(_durationInSeconds > 0, "Round duration must be greater than zero");
-        require(!roundActive, "A round is already active");
+        require(_durationInSeconds > 0, "Bad duration");
+        require(!roundActive, "Round active");
         
         roundStartTime = block.timestamp;
         roundEndTime = block.timestamp + _durationInSeconds;
@@ -314,26 +241,27 @@ contract QuadraticFunding {
     /// @notice End the current funding round (owner only)
     /// @dev Stops accepting new contributions
     function endRound() public onlyOwner {
-        require(roundActive, "No active round to end");
+        require(roundActive, "No active round");
         
         roundActive = false;
         emit RoundEnded(block.timestamp);
     }
     
-    /// @notice Check if a round is currently active
-    /// @return isActive Whether the round is active and within time bounds
+    
     function isRoundActive() public view returns (bool) {
         if (!roundActive) return false;
         return block.timestamp >= roundStartTime && block.timestamp <= roundEndTime;
     }
     
-    /// @notice Get the remaining time for the current round
-    /// @return secondsRemaining The number of seconds until round ends (0 if ended)
     function getRoundTimeRemaining() public view returns (uint256) {
         if (!roundActive || block.timestamp > roundEndTime) {
             return 0;
         }
         return roundEndTime - block.timestamp;
+    }
+    
+    function isRoundFinalized() public view returns (bool) {
+        return roundFinalized;
     }
     
     // ============ Round Finalization ============
@@ -343,23 +271,19 @@ contract QuadraticFunding {
     /// @dev Can only be called after the round has ended
     /// @dev Calculates CQF payouts for all projects and stores them for withdrawal
     function finalizeRound() public onlyOwner {
-        require(roundActive, "No active round to finalize");
-        require(block.timestamp > roundEndTime, "Round has not ended yet");
-        require(!roundFinalized, "Round already finalized");
-        require(totalMatchingFund > 0, "No matching fund available");
+        require(roundActive, "No round");
+        require(block.timestamp > roundEndTime, "Active");
+        require(!roundFinalized, "Already finalized");
+        require(totalMatchingFund > 0, "No funds");
         
-        // Mark round as finalized before calculations 
         roundActive = false;
         roundFinalized = true;
         
         uint256 totalMatchingDistributed = 0;
         
-        // Calculate matching for each project
         if (projectCounter > 0) {
-            // Calculate alpha once for all projects
             uint256 alpha = calculateOptimalAlpha();
             
-            // Calculate matching amount for each project
             for (uint256 i = 0; i < projectCounter; i++) {
                 Project storage project = projects[i];
                 
@@ -368,7 +292,6 @@ contract QuadraticFunding {
                     continue;
                 }
                 
-                // Calculate this project's QF score
                 uint256 sumOfSqrts = 0;
                 for (uint256 j = 0; j < project.contributionAmounts.length; j++) {
                     sumOfSqrts += sqrtFixed(project.contributionAmounts[j]);
@@ -377,13 +300,11 @@ contract QuadraticFunding {
                 uint256 projectQFScore = (sumOfSqrts * sumOfSqrts) / (PRECISION_FACTOR * PRECISION_FACTOR);
                 uint256 projectDirectContributions = project.totalDonated;
                 
-                // CQF Formula: matchingAmount = alpha * QF_score + (1 - alpha) * direct_contributions
                 uint256 qfComponent = (alpha * projectQFScore) / 1e18;
                 uint256 directComponent = ((1e18 - alpha) * projectDirectContributions) / 1e18;
                 
                 uint256 matchingAmount = qfComponent + directComponent;
                 
-                // Ensure we don't exceed the available matching fund
                 if (totalMatchingDistributed + matchingAmount > totalMatchingFund) {
                     matchingAmount = totalMatchingFund - totalMatchingDistributed;
                 }
@@ -391,30 +312,22 @@ contract QuadraticFunding {
                 finalizedMatchingAmounts[i] = matchingAmount;
                 totalMatchingDistributed += matchingAmount;
                 
-                // Emit event with total payout info
                 uint256 totalProjectPayout = projectDirectContributions + matchingAmount;
                 emit MatchingDistributed(i, matchingAmount, totalProjectPayout);
             }
         }
         
-        // Update remaining matching fund
         remainingMatchingFund = totalMatchingFund - totalMatchingDistributed;
         
         emit RoundFinalized(block.timestamp, totalMatchingDistributed);
-    }
-    
-    /// @notice Check if the current round is finalized
-    /// @return isFinalized Whether the round has been finalized
-    function isRoundFinalized() public view returns (bool) {
-        return roundFinalized;
     }
     
     /// @notice Get the finalized matching amount for a project
     /// @param _projectId The ID of the project
     /// @return matchingAmount The finalized matching amount for this project
     function getFinalizedMatchingAmount(uint256 _projectId) public view returns (uint256) {
-        require(_projectId < projectCounter, "Project does not exist");
-        require(roundFinalized, "Round not yet finalized");
+        require(_projectId < projectCounter, "Invalid project");
+        require(roundFinalized, "Not finalized");
         return finalizedMatchingAmounts[_projectId];
     }
     
@@ -422,8 +335,8 @@ contract QuadraticFunding {
     /// @param _projectId The ID of the project
     /// @return totalPayout The total amount the project will receive
     function getProjectTotalPayout(uint256 _projectId) public view returns (uint256) {
-        require(_projectId < projectCounter, "Project does not exist");
-        require(roundFinalized, "Round not yet finalized");
+        require(_projectId < projectCounter, "Invalid project");
+        require(roundFinalized, "Not finalized");
         
         uint256 directDonations = projects[_projectId].totalDonated;
         uint256 matchingAmount = finalizedMatchingAmounts[_projectId];
@@ -435,11 +348,10 @@ contract QuadraticFunding {
     /// @dev Can be called multiple times, but will only allow withdrawal of available funds
     /// @dev Partial withdrawals supported
     function withdrawProjectFunds(uint256 _projectId) public {
-        require(_projectId < projectCounter, "Project does not exist");
-        require(roundFinalized, "Round not yet finalized");
-        
+        require(_projectId < projectCounter, "Invalid project");
+        require(roundFinalized, "Not finalized");
         Project storage project = projects[_projectId];
-        require(msg.sender == project.recipient, "Only project recipient can withdraw");
+        require(msg.sender == project.recipient, "Not owner");
         
         // Calculate total payout available
         uint256 directDonations = project.totalDonated;
@@ -448,16 +360,14 @@ contract QuadraticFunding {
         
         // Calculate how much is still available to withdraw
         uint256 alreadyWithdrawn = projectWithdrawnAmount[_projectId];
-        require(totalPayout > alreadyWithdrawn, "No funds available to withdraw");
+        require(totalPayout > alreadyWithdrawn, "No funds left");
         
         uint256 availableToWithdraw = totalPayout - alreadyWithdrawn;
         
-        // Update withdrawn amount before transfer (reentrancy protection)
         projectWithdrawnAmount[_projectId] = totalPayout;
         
-        // Transfer funds
         (bool success, ) = payable(msg.sender).call{value: availableToWithdraw}("");
-        require(success, "Withdrawal transfer failed");
+        require(success, "Transfer failed");
         
         emit FundsWithdrawn(_projectId, msg.sender, availableToWithdraw);
     }
@@ -466,7 +376,7 @@ contract QuadraticFunding {
     /// @param _projectId The ID of the project
     /// @return withdrawnAmount The amount already withdrawn
     function getProjectWithdrawnAmount(uint256 _projectId) public view returns (uint256) {
-        require(_projectId < projectCounter, "Project does not exist");
+        require(_projectId < projectCounter, "Invalid project");
         return projectWithdrawnAmount[_projectId];
     }
     
@@ -474,8 +384,8 @@ contract QuadraticFunding {
     /// @param _projectId The ID of the project
     /// @return remainingAmount The amount still available to withdraw
     function getProjectRemainingWithdrawal(uint256 _projectId) public view returns (uint256) {
-        require(_projectId < projectCounter, "Project does not exist");
-        require(roundFinalized, "Round not yet finalized");
+        require(_projectId < projectCounter, "Invalid project");
+        require(roundFinalized, "Not finalized");
         
         uint256 totalPayout = getProjectTotalPayout(_projectId);
         uint256 alreadyWithdrawn = projectWithdrawnAmount[_projectId];
@@ -491,7 +401,7 @@ contract QuadraticFunding {
     /// @dev Returns the amount available for owner recovery (undistributed matching funds)
     /// @return recoverable The amount of matching funds not distributed to projects
     function getRecoverableMatchingFunds() public view returns (uint256) {
-        require(roundFinalized, "Round not yet finalized");
+        require(roundFinalized, "Not finalized");
         return remainingMatchingFund;
     }
     
@@ -499,14 +409,14 @@ contract QuadraticFunding {
     /// @dev Only available after round is finalized
     /// @dev Transfers remaining matching funds back to owner
     function recoverUnusedMatchingFunds() public onlyOwner {
-        require(roundFinalized, "Round not yet finalized");
-        require(remainingMatchingFund > 0, "No remaining matching funds to recover");
+        require(roundFinalized, "Not finalized");
+        require(remainingMatchingFund > 0, "No funds");
         
         uint256 amountToRecover = remainingMatchingFund;
         remainingMatchingFund = 0;
         
         (bool success, ) = payable(owner).call{value: amountToRecover}("");
-        require(success, "Recovery transfer failed");
+        require(success, "Recover failed");
     }
     
     /// @notice Get complete finalization status and summary
@@ -565,8 +475,6 @@ contract QuadraticFunding {
     function sqrtFixed(uint256 x) public pure returns (uint256 y) {
         if (x == 0) return 0;
         
-        // Scale input: multiply by PRECISION_FACTOR to reduce division loss
-        // For wei amounts, scaling helps maintain precision during sqrt calculation
         uint256 scaledInput = x * PRECISION_FACTOR;
         
         if (scaledInput == 1) return 1;
@@ -582,34 +490,6 @@ contract QuadraticFunding {
         return y;
     }
     
-    /// @notice Calculate the matching score for a project using Quadratic Funding formula with fixed-point precision
-    /// @dev Formula: matchingScore = (sqrt(c1) + sqrt(c2) + ... + sqrt(cn))^2
-    /// @dev Uses fixed-point math with PRECISION_FACTOR to maintain accuracy
-    /// @dev This approach calculates square roots DURING the final payout (more gas efficient for contributions)
-    /// @param _projectId The ID of the project
-    /// @return matchingScore The calculated matching score based on all contributions
-    function calculateMatchingScore(uint256 _projectId) public returns (uint256) {
-        require(_projectId < projectCounter, "Project does not exist");
-        
-        Project storage project = projects[_projectId];
-        require(project.contributionAmounts.length > 0, "No contributions for this project");
-        
-        uint256 sumOfSqrts = 0;
-        
-        // Sum the fixed-point square roots of all individual contributions
-        for (uint256 i = 0; i < project.contributionAmounts.length; i++) {
-            sumOfSqrts += sqrtFixed(project.contributionAmounts[i]);
-        }
-        
-        // Square the sum of square roots
-        // Divide by PRECISION_FACTOR^2 to remove the scaling applied in sqrtFixed
-        uint256 matchingScore = (sumOfSqrts * sumOfSqrts) / (PRECISION_FACTOR * PRECISION_FACTOR);
-        
-        emit MatchingScoreCalculated(_projectId, matchingScore);
-        
-        return matchingScore;
-    }
-    
     /// @notice Calculate and distribute the matching amount for a project
     /// @dev Distributes from the matching pool based on QF formula: matchingAmount = (matchingScore / totalMatchingScores) * totalMatchingFund
     /// @dev All projects' matching scores must be calculated before calling this function
@@ -622,11 +502,11 @@ contract QuadraticFunding {
         returns (uint256) 
     {
         require(_projectId < projectCounter, "Project does not exist");
-        require(_totalMatchingScoresAllProjects > 0, "Total matching scores cannot be zero");
-        require(totalMatchingFund > 0, "Matching fund is empty");
+        require(_totalMatchingScoresAllProjects > 0, "Bad scores");
+        require(totalMatchingFund > 0, "No funds");
         
         Project storage project = projects[_projectId];
-        require(project.contributionAmounts.length > 0, "No contributions for this project");
+        require(project.contributionAmounts.length > 0, "No contribs");
         
         // Calculate matching score for this project
         uint256 projectMatchingScore = 0;
@@ -652,8 +532,8 @@ contract QuadraticFunding {
         view 
         returns (uint256[] memory matchingAmounts) 
     {
-        require(totalMatchingFund > 0, "Matching fund is empty");
-        require(projectCounter > 0, "No projects registered");
+        require(totalMatchingFund > 0, "No funds");
+        require(projectCounter > 0, "No projects");
         
         matchingAmounts = new uint256[](projectCounter);
         uint256 totalMatchingScores = 0;
@@ -691,23 +571,15 @@ contract QuadraticFunding {
     /// @param _projectId The ID of the project
     /// @return The count of unique contributors
     function getUniqueContributorCount(uint256 _projectId) public view returns (uint256) {
-        require(_projectId < projectCounter, "Project does not exist");
+        require(_projectId < projectCounter, "Invalid project");
         return projects[_projectId].contributorAddresses.length;
-    }
-    
-    /// @notice Get the contribution history for a project
-    /// @param _projectId The ID of the project
-    /// @return Array of all individual contribution amounts
-    function getContributionHistory(uint256 _projectId) public view returns (uint256[] memory) {
-        require(_projectId < projectCounter, "Project does not exist");
-        return projects[_projectId].contributionAmounts;
     }
     
     /// @notice Get all unique contributors to a project
     /// @param _projectId The ID of the project
     /// @return Array of contributor addresses
     function getContributors(uint256 _projectId) public view returns (address[] memory) {
-        require(_projectId < projectCounter, "Project does not exist");
+        require(_projectId < projectCounter, "Invalid project");
         return projects[_projectId].contributorAddresses;
     }
     
@@ -726,7 +598,7 @@ contract QuadraticFunding {
     /// @notice Enable or disable Sybil resistance checks
     /// @param _enabled Whether to enable Sybil resistance
     function setSybilResistanceEnabled(bool _enabled) public onlyOwner {
-        require(address(sybilResistance) != address(0) || _enabled == false, "No Sybil resistance provider set");
+        require(address(sybilResistance) != address(0) || _enabled == false, "No provider");
         sybilResistanceEnabled = _enabled;
         emit SybilResistanceToggled(_enabled);
     }
@@ -749,7 +621,7 @@ contract QuadraticFunding {
     /// @notice Add an address to the verification whitelist
     /// @param _account The address to verify
     function verifyAddress(address _account) public onlyOwner {
-        require(_account != address(0), "Cannot verify zero address");
+        require(_account != address(0), "Bad address");
         verifiedAddresses[_account] = true;
         emit AddressVerified(_account);
     }
@@ -758,7 +630,7 @@ contract QuadraticFunding {
     /// @param _accounts Array of addresses to verify
     function verifyAddresses(address[] memory _accounts) public onlyOwner {
         for (uint256 i = 0; i < _accounts.length; i++) {
-            require(_accounts[i] != address(0), "Cannot verify zero address");
+            require(_accounts[i] != address(0), "Bad addr");
             verifiedAddresses[_accounts[i]] = true;
             emit AddressVerified(_accounts[i]);
         }
@@ -793,10 +665,6 @@ contract QuadraticFunding {
         return true;
     }
     
-    /// @notice Get the current Sybil resistance configuration
-    /// @return _sybilResistanceEnabled Whether external Sybil resistance is enabled
-    /// @return _whitelistMode Whether whitelist mode is enabled
-    /// @return _provider The address of the Sybil resistance provider
     function getSybilResistanceConfig() public view returns (
         bool _sybilResistanceEnabled,
         bool _whitelistMode,
@@ -811,7 +679,7 @@ contract QuadraticFunding {
     /// @dev Returns sum of (sqrt(c1) + sqrt(c2) + ...)^2 for all projects
     /// @return totalQFScore The sum of all projects' QF scores
     function calculateTotalQFScore() public view returns (uint256 totalQFScore) {
-        require(projectCounter > 0, "No projects registered");
+        require(projectCounter > 0, "No projects");
         
         for (uint256 i = 0; i < projectCounter; i++) {
             Project storage project = projects[i];
@@ -838,8 +706,8 @@ contract QuadraticFunding {
     /// @dev Precision: uses 1e18 for fixed-point decimal representation
     /// @return alpha The optimal weighting factor (scaled by 1e18)
     function calculateOptimalAlpha() public returns (uint256 alpha) {
-        require(projectCounter > 0, "No projects registered");
-        require(totalMatchingFund > 0, "Matching fund is empty");
+        require(projectCounter > 0, "No projects");
+        require(totalMatchingFund > 0, "No funds");
         
         uint256 totalQFScore = calculateTotalQFScore();
         uint256 totalDirectContributions = totalContribution;
@@ -889,7 +757,7 @@ contract QuadraticFunding {
         require(_projectId < projectCounter, "Project does not exist");
         
         Project storage project = projects[_projectId];
-        require(project.contributionAmounts.length > 0, "No contributions for this project");
+        require(project.contributionAmounts.length > 0, "No contribs");
         
         // Calculate alpha
         uint256 alpha = calculateOptimalAlpha();
@@ -918,8 +786,8 @@ contract QuadraticFunding {
     /// @dev Total payouts are guaranteed not to exceed the matching pool budget
     /// @return cqfPayouts Array where cqfPayouts[i] is the payout for project i
     function calculateAllCQFPayouts() public returns (uint256[] memory cqfPayouts) {
-        require(projectCounter > 0, "No projects registered");
-        require(totalMatchingFund > 0, "Matching fund is empty");
+        require(projectCounter > 0, "No projects");
+        require(totalMatchingFund > 0, "No funds");
         
         // Calculate alpha once for all projects
         uint256 alpha = calculateOptimalAlpha();
@@ -959,12 +827,6 @@ contract QuadraticFunding {
         return cqfPayouts;
     }
     
-    /// @notice Get summary of CQF calculation parameters
-    /// @dev Useful for understanding how the matching pool will be distributed
-    /// @return alpha The calculated weighting factor (scaled by 1e18, so 5e17 = 0.5)
-    /// @return totalQFScore Total QF score across all projects
-    /// @return totalDirectContributions Total direct contributions (sum of all individual donations)
-    /// @return matchingFund Available matching pool budget
     function getCQFSummary() public returns (
         uint256 alpha,
         uint256 totalQFScore,
