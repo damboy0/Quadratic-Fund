@@ -4,7 +4,7 @@ pragma solidity ^0.8.13;
 /// @title Quadratic Funding
 /// @notice Simple QF implementation for public goods
 
-/// @notice Interface for Sybil resistance (e.g., Gitcoin Passport, WorldID, or custom identity)
+/// @notice Interface for Sybil resistance (e.g., Gitcoin Passport or custom identity)
 interface ISybilResistance {
     /// @notice Check if an address is verified as a unique human/entity
     /// @param _address The address to verify
