@@ -72,13 +72,13 @@ contract QuadraticFundingTest is Test {
     
     function test_rejectProjectWithZeroAddress() public {
         vm.prank(owner);
-        vm.expectRevert("Recipient address cannot be zero");
+        vm.expectRevert("Invalid recipient");
         qf.registerProject("Bad Project", address(0));
     }
     
     function test_rejectProjectWithEmptyName() public {
         vm.prank(owner);
-        vm.expectRevert("Project name cannot be empty");
+        vm.expectRevert("No name");
         qf.registerProject("", projectA);
     }
     
@@ -103,7 +103,7 @@ contract QuadraticFundingTest is Test {
     
     function test_rejectNonOwnerDeposit() public {
         vm.prank(donor1);
-        vm.expectRevert("Only owner can call this function");
+        vm.expectRevert("Owner only");
         qf.depositMatchingFund{value: 10 ether}();
     }
     
@@ -139,7 +139,7 @@ contract QuadraticFundingTest is Test {
         vm.startPrank(owner);
         qf.startRound(7 days);
         
-        vm.expectRevert("A round is already active");
+        vm.expectRevert("Round active");
         qf.startRound(7 days);
         vm.stopPrank();
     }
@@ -215,7 +215,7 @@ contract QuadraticFundingTest is Test {
         vm.warp(block.timestamp + 2 days);
         
         vm.prank(donor1);
-        vm.expectRevert("Round has ended");
+        vm.expectRevert("Ended");
         qf.contribute{value: 1 ether}(0);
     }
     
@@ -224,7 +224,7 @@ contract QuadraticFundingTest is Test {
         qf.registerProject("Project A", projectA);
         
         vm.prank(donor1);
-        vm.expectRevert("Funding round is not active");
+        vm.expectRevert("No round");
         qf.contribute{value: 1 ether}(0);
     }
     
@@ -235,7 +235,7 @@ contract QuadraticFundingTest is Test {
         vm.stopPrank();
         
         vm.prank(donor1);
-        vm.expectRevert("Contribution amount must be greater than zero");
+        vm.expectRevert("Zero contribution");
         qf.contribute{value: 0}(0);
     }
     
@@ -316,7 +316,7 @@ contract QuadraticFundingTest is Test {
         
         // donor2 is not verified
         vm.prank(donor2);
-        vm.expectRevert("Address not on verification whitelist");
+        vm.expectRevert("Not whitelisted");
         qf.contribute{value: 1 ether}(0);
     }
     
@@ -450,7 +450,7 @@ contract QuadraticFundingTest is Test {
         vm.stopPrank();
         
         vm.prank(owner);
-        vm.expectRevert("Round has not ended yet");
+        vm.expectRevert("Active");
         qf.finalizeRound();
     }
     
@@ -553,7 +553,7 @@ contract QuadraticFundingTest is Test {
         qf.finalizeRound();
         
         vm.prank(donor1);
-        vm.expectRevert("Only project recipient can withdraw");
+        vm.expectRevert("Not owner");
         qf.withdrawProjectFunds(0);
     }
     
@@ -564,7 +564,7 @@ contract QuadraticFundingTest is Test {
         vm.stopPrank();
         
         vm.prank(projectA);
-        vm.expectRevert("Round not yet finalized");
+        vm.expectRevert("Not finalized");
         qf.withdrawProjectFunds(0);
     }
     
